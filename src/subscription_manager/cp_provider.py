@@ -17,6 +17,7 @@ import base64
 import json
 
 from subscription_manager.identity import ConsumerIdentity
+from subscription_manager import utils
 import rhsm.connection as connection
 
 
@@ -131,6 +132,8 @@ class CPProvider(object):
                     correlation_id=self.correlation_id,
                     no_proxy=self.no_proxy,
                     restlib_class=self.restlib_class)
+            self.consumer_auth_cp.conn.user_agent += " subscription-manager/%s" % \
+                                                     utils.get_client_versions()['subscription-manager']
         return self.consumer_auth_cp
 
     def get_keycloak_auth_cp(self, token):
@@ -172,6 +175,8 @@ class CPProvider(object):
                 restlib_class=self.restlib_class,
                 token=self.token
                 )
+        self.keycloak_auth_cp.conn.user_agent += " subscription-manager/%s" % \
+                                                 utils.get_client_versions()['subscription-manager']
         return self.keycloak_auth_cp
 
     def get_basic_auth_cp(self):
@@ -189,6 +194,8 @@ class CPProvider(object):
                     correlation_id=self.correlation_id,
                     no_proxy=self.no_proxy,
                     restlib_class=self.restlib_class)
+            self.basic_auth_cp.conn.user_agent += " subscription-manager/%s" % \
+                                                  utils.get_client_versions()['subscription-manager']
         return self.basic_auth_cp
 
     def get_no_auth_cp(self):
@@ -204,6 +211,8 @@ class CPProvider(object):
                     correlation_id=self.correlation_id,
                     no_proxy=self.no_proxy,
                     restlib_class=self.restlib_class)
+            self.no_auth_cp.conn.user_agent += " subscription-manager/%s" % \
+                                               utils.get_client_versions()['subscription-manager']
         return self.no_auth_cp
 
     def get_content_connection(self):
@@ -215,4 +224,6 @@ class CPProvider(object):
                                                                    proxy_user=self.proxy_user,
                                                                    proxy_password=self.proxy_password,
                                                                    no_proxy=self.no_proxy)
+            self.content_connection.conn.user_agent += " subscription-manager/%s" % \
+                                                       utils.get_client_versions()['subscription-manager']
         return self.content_connection
