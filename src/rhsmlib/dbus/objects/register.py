@@ -44,6 +44,7 @@ class RegisterDBusObject(base_object.BaseObject):
         constants.REGISTER_INTERFACE,
         in_signature='s',
         out_signature='s')
+    @util.dbus_handle_sender
     @util.dbus_handle_exceptions
     def Start(self, locale, sender=None):
         locale = dbus_utils.dbus_to_python(locale, expected_type=str)
@@ -54,17 +55,21 @@ class RegisterDBusObject(base_object.BaseObject):
                 return self.server.address
 
             log.debug('Attempting to create new domain socket server')
+            cmd_line = util.dbus_get_sender_cmd_line(sender)
             self.server = server.DomainSocketServer(
                 object_classes=[DomainSocketRegisterDBusObject],
+                sender=sender,
+                cmd_line=cmd_line
             )
             address = self.server.run()
-            log.debug('DomainSocketServer created and listening on "%s"', address)
+            log.debug('DomainSocketServer for sender %s created and listening on "%s"' % (sender, address))
             return address
 
     @util.dbus_service_method(
         constants.REGISTER_INTERFACE,
         in_signature='s',
         out_signature='b')
+    @util.dbus_handle_sender
     @util.dbus_handle_exceptions
     def Stop(self, locale, sender=None):
         locale = dbus_utils.dbus_to_python(locale, expected_type=str)
@@ -114,7 +119,7 @@ class DomainSocketRegisterDBusObject(base_object.BaseObject):
     interface_name = constants.PRIVATE_REGISTER_INTERFACE
     default_dbus_path = constants.PRIVATE_REGISTER_DBUS_PATH
 
-    def __init__(self, conn=None, object_path=None, bus_name=None):
+    def __init__(self, conn=None, object_path=None, bus_name=None, sender=None, cmd_line=None):
         # On our DomainSocket DBus server since a private connection is not a "bus", we have to treat
         # it slightly differently. In particular there are no names, no discovery and so on.
         super(DomainSocketRegisterDBusObject, self).__init__(
@@ -122,6 +127,8 @@ class DomainSocketRegisterDBusObject(base_object.BaseObject):
             object_path=object_path,
             bus_name=bus_name
         )
+        self.sender = sender
+        self.cmd_line = cmd_line
 
     @dbus.service.method(
         dbus_interface=constants.PRIVATE_REGISTER_INTERFACE,
@@ -145,10 +152,13 @@ class DomainSocketRegisterDBusObject(base_object.BaseObject):
         connection_options['password'] = dbus_utils.dbus_to_python(password, expected_type=str)
         locale = dbus_utils.dbus_to_python(locale, expected_type=str)
 
-        Locale.set(locale)
-        cp = self.build_uep(connection_options, basic_auth_method=True)
-
-        owners = cp.getOwnerList(connection_options['username'])
+        util.dbus_set_sender_cmd_line(sender=self.sender, cmd_line=self.cmd_line)
+        try:
+            Locale.set(locale)
+            cp = self.build_uep(connection_options, basic_auth_method=True)
+            owners = cp.getOwnerList(connection_options['username'])
+        finally:
+            util.dbus_reset_sender_cmd_line()
 
         return json.dumps(owners)
 
@@ -162,7 +172,7 @@ class DomainSocketRegisterDBusObject(base_object.BaseObject):
         Signal triggered, when user tries to register, no organization is specified, but
         user is member of more than one organization and it will be necessary to select
         one organization in client application consuming this D-Bus API
-        :param orgs: string with json.dump of org dictionary (key: org_id, value: org_name)
+        :param orgs: string with json.dump of org dictionary
         :return: None
         """
         log.debug("D-Bus signal UserMemberOfOrgs emitted on the interface %s with arg: %s" %
@@ -221,26 +231,30 @@ class DomainSocketRegisterDBusObject(base_object.BaseObject):
         options = dbus_utils.dbus_to_python(options, expected_type=dict)
         locale = dbus_utils.dbus_to_python(locale, expected_type=str)
 
-        Locale.set(locale)
-        cp = self.build_uep(connection_options)
+        util.dbus_set_sender_cmd_line(sender=self.sender, cmd_line=self.cmd_line)
+        try:
+            Locale.set(locale)
+            cp = self.build_uep(connection_options)
 
-        register_service = RegisterService(cp)
+            register_service = RegisterService(cp)
 
-        # Try to get organization from the list available organizations, when the list contains
-        # only one item, then register_service.determine_owner_key will return this organization
-        if not org:
-            org = register_service.determine_owner_key(
-                username=connection_options['username'],
-                get_owner_cb=self._get_owner_cb,
-                no_owner_cb=self._no_owner_cb
-            )
+            # Try to get organization from the list available organizations, when the list contains
+            # only one item, then register_service.determine_owner_key will return this organization
+            if not org:
+                org = register_service.determine_owner_key(
+                    username=connection_options['username'],
+                    get_owner_cb=self._get_owner_cb,
+                    no_owner_cb=self._no_owner_cb
+                )
 
-        # When there is more organizations, then signal was triggered in callback method
-        # _get_owner_cb, but some exception has to be raised here to not try registration process
-        if not org:
-            raise OrgNotSpecifiedException(username=connection_options['username'])
+            # When there is more organizations, then signal was triggered in callback method
+            # _get_owner_cb, but some exception has to be raised here to not try registration process
+            if not org:
+                raise OrgNotSpecifiedException(username=connection_options['username'])
 
-        consumer = register_service.register(org, **options)
+            consumer = register_service.register(org, **options)
+        finally:
+            util.dbus_reset_sender_cmd_line()
 
         return json.dumps(consumer)
 
@@ -259,14 +273,18 @@ class DomainSocketRegisterDBusObject(base_object.BaseObject):
         org = dbus_utils.dbus_to_python(org, expected_type=str)
         locale = dbus_utils.dbus_to_python(locale, expected_type=str)
 
-        Locale.set(locale)
-        cp = self.build_uep(connection_options)
+        util.dbus_set_sender_cmd_line(sender=self.sender, cmd_line=self.cmd_line)
+        try:
+            Locale.set(locale)
+            cp = self.build_uep(connection_options)
 
-        register_service = RegisterService(cp)
-        consumer = register_service.register(org, **options)
+            register_service = RegisterService(cp)
+            consumer = register_service.register(org, **options)
 
-        log.debug("System registered, updating entitlements if needed")
-        entcertlib = EntCertActionInvoker()
-        entcertlib.update()
+            log.debug("System registered, updating entitlements if needed")
+            entcertlib = EntCertActionInvoker()
+            entcertlib.update()
+        finally:
+            util.dbus_reset_sender_cmd_line()
 
         return json.dumps(consumer)

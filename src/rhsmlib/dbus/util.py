@@ -21,22 +21,93 @@ import json
 import re
 
 from rhsmlib.dbus import exceptions
+from rhsmlib.dbus import dbus_utils
+from rhsmlib.client_info import DBusSender
 
 log = logging.getLogger(__name__)
 
 __all__ = [
+    'dbus_get_sender_cmd_line',
+    'dbus_set_sender_cmd_line',
     'dbus_handle_exceptions',
+    'dbus_handle_sender',
     'dbus_service_method',
     'dbus_service_signal'
 ]
 
 
+def dbus_get_sender_cmd_line(sender, bus=None):
+    """
+    Try to get command line of sender
+    :param sender: sender
+    :param bus: bus
+    :return:
+    """
+    if bus is None:
+        bus = dbus.SystemBus()
+    cmd_line = dbus_utils.command_of_sender(bus, sender)
+    if cmd_line is not None and type(cmd_line) == str:
+        # Store only first argument of command line (no argument including username or password)
+        cmd_line = cmd_line.split()[0]
+    return cmd_line
+
+
+def dbus_set_sender_cmd_line(sender, cmd_line=None, bus=None):
+    """
+    This method set sender's command line in the singleton object
+    :return: None
+    """
+    dbus_sender = DBusSender()
+    if cmd_line is None:
+        dbus_sender.cmd_line = dbus_get_sender_cmd_line(sender, bus)
+    else:
+        dbus_sender.cmd_line = cmd_line
+    log.debug("D-Bus sender: %s (cmd-line: %s)" % (sender, dbus_sender.cmd_line))
+
+
+def dbus_reset_sender_cmd_line():
+    """
+    Reset sender's command line
+    :return: None
+    """
+    dbus_sender = DBusSender()
+    dbus_sender.cmd_line = None
+
+
+@decorator.decorator
+def dbus_handle_sender(func, *args, **kwargs):
+    """
+    Decorator to handle sender argument
+    :param func: method with implementation of own logic of D-Bus method
+    :param args: arguments of D-Bus method
+    :param kwargs: keyed arguments of D-Bus method
+    :return: result of D-Bus method
+    """
+
+    sender = None
+    # Get sender from arguments
+    if 'sender' in kwargs:
+        sender = kwargs['sender']
+    elif len(args) > 0:
+        sender = args[-1]
+
+    if sender is not None:
+        dbus_set_sender_cmd_line(sender)
+
+    try:
+        return func(*args, **kwargs)
+    finally:
+        dbus_reset_sender_cmd_line()
+
+
 @decorator.decorator
 def dbus_handle_exceptions(func, *args, **kwargs):
-    """Decorator to handle exceptions, log them, and wrap them if necessary"""
+    """
+    Decorator to handle exceptions, log them, and wrap them if necessary.
+    """
+
     try:
-        ret = func(*args, **kwargs)
-        return ret
+        return func(*args, **kwargs)
     except Exception as err:
         log.exception(err)
         trace = sys.exc_info()[2]
